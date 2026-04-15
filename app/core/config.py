@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     JWT_SECRET: str
     REDIS_URL: str
+    DATABASE_URL: str
 
     class Config:
         env_file = ".env"
