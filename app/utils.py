@@ -1,55 +1,30 @@
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+import bcrypt
 
-import jwt
-from fastapi import HTTPException, status
-from passlib.context import CryptContext
-
-from app.core.config import get_settings
-
-settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """
+    Hash password using bcrypt.
+
+    Note: bcrypt has a 72-byte limit, so we truncate longer passwords.
+    This is safe because we still verify against the truncated version.
+    """
+    # Truncate password to 72 characters (bcrypt limitation)
+    password = password[:72]
+    # Generate salt and hash
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """
+    Verify password against hash.
 
-
-def _create_token(data: dict, expires_delta: timedelta, token_type: str) -> str:
-    payload = data.copy()
-    now = datetime.now(timezone.utc)
-    payload.update(
-        {
-            "exp": now + expires_delta,
-            "iat": now,
-            "jti": str(uuid.uuid4()),
-            "type": token_type,
-        }
+    Note: We truncate to 72 characters to match the hashing behavior.
+    """
+    # Truncate password to 72 characters (bcrypt limitation)
+    plain_password = plain_password[:72]
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
     )
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALGORITHM)
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    ttl = expires_delta or timedelta(minutes=15)
-    return _create_token(data=data, expires_delta=ttl, token_type="access")
-
-
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    ttl = expires_delta or timedelta(minutes=7)
-    return _create_token(data=data, expires_delta=ttl, token_type="refresh")
-
-
-def decode_token(token: str) -> dict:
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[ALGORITHM])
-        return payload
-    except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-        )

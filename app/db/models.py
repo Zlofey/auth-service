@@ -1,11 +1,22 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime
+from sqlalchemy import Enum as AlchemyEnum
+from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+
+
+class UserRole(str, Enum):
+    """Роли пользователей."""
+
+    ADMIN = "admin"
+    STAFF = "staff"
+    CLIENT = "client"
 
 
 class User(Base):
@@ -17,8 +28,12 @@ class User(Base):
         String(255), unique=True, nullable=False, index=True
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(
-        String(20), default="default_role", nullable=False
+    role: Mapped[UserRole] = mapped_column(
+        AlchemyEnum(
+            "admin", "staff", "client", name="userrole", create_constraint=True
+        ),
+        default="client",
+        nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(
