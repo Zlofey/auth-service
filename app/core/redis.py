@@ -7,7 +7,6 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-# Создаём клиент, но НЕ подключаемся сразу
 redis_client = redis.from_url(
     settings.REDIS_URL,
     decode_responses=True,  # Автоматически декодирует байты в строки
