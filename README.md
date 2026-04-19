@@ -2,7 +2,8 @@
 
 Сервис аутентификации с JWT токенами, refresh token rotation и защитой от race conditions.
 
-![](/home/tom/Desktop/jwt auth.drawio.svg)
+![Схема архитектуры](./jwt%20auth.drawio.svg)
+[ссылка draw.io](https://drive.google.com/file/d/1x-XFTvfuKUAr0uB8OmdfOS-5FGenw0LM/view?usp=sharing)
 ## Ключевые архитектурные решения
 
 - **Независимость Content Service:** Сервис контента не обращается к Redis и не валидирует токены. Это устраняет лишние сетевые вызовы, упрощает масштабирование и снижает связанность компонентов.
