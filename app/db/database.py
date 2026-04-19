@@ -17,12 +17,14 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncSession:
+    """Выдаёт сессию на время запроса.
+
+    Коммит выполняется явно.
+    При любом исключении — откат незакреплённых изменений.
+    """
     async with async_session_maker() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()

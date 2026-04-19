@@ -14,7 +14,6 @@ app = FastAPI(
     on_shutdown=[close_redis],
 )
 
-# Add logging middleware
 app.add_middleware(LoggingMiddleware)
 
 app.include_router(auth_router)

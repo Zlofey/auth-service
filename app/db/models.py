@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from enum import Enum
 
 from sqlalchemy import Boolean, DateTime
 from sqlalchemy import Enum as AlchemyEnum
@@ -9,14 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
-
-
-class UserRole(str, Enum):
-    """Роли пользователей."""
-
-    ADMIN = "admin"
-    STAFF = "staff"
-    CLIENT = "client"
+from app.enums import UserRole
 
 
 class User(Base):

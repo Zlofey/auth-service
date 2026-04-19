@@ -1,29 +1,41 @@
+from typing import TYPE_CHECKING
+
 import bcrypt
 
-ALGORITHM = "HS256"
+if TYPE_CHECKING:
+    from fastapi import Request
+
+
+def get_client_ip(request: "Request") -> str | None:
+    """Извлекает реальный IP клиента из запроса.
+
+    Проверяет заголовки x-forwarded-for и x-real-ip для прокси/балансировщиков.
+    """
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+
+    return request.client.host if request.client else None
+
+
+def get_client_info(request: "Request") -> tuple[str | None, str | None]:
+    """Извлекает user-agent и IP из запроса."""
+    user_agent = request.headers.get("user-agent")
+    ip = get_client_ip(request)
+    return user_agent, ip
 
 
 def hash_password(password: str) -> str:
-    """
-    Hash password using bcrypt.
-
-    Note: bcrypt has a 72-byte limit, so we truncate longer passwords.
-    This is safe because we still verify against the truncated version.
-    """
-    # Truncate password to 72 characters (bcrypt limitation)
     password = password[:72]
-    # Generate salt and hash
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify password against hash.
-
-    Note: We truncate to 72 characters to match the hashing behavior.
-    """
-    # Truncate password to 72 characters (bcrypt limitation)
     plain_password = plain_password[:72]
     return bcrypt.checkpw(
         plain_password.encode("utf-8"), hashed_password.encode("utf-8")

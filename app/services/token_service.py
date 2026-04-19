@@ -14,31 +14,22 @@ ALGORITHM = "HS256"
 
 
 class TokenService:
-    """Сервис для работы с JWT токенами.
+    """Сервис для работы с JWT токенами: создание, декодирование, валидация."""
 
-    Этот класс инкапсулирует все операции с JWT:
-    - Создание access и refresh токенов
-    - Декодирование и валидация токенов
-    - Извлечение метаданных токенов
-
-    Использование класса упрощает мокинг в тестах и обеспечивает
-    лучшую организацию кода по сравнению с отдельными функциями.
-    """
+    @staticmethod
+    def user_token_data(user: Any) -> dict[str, Any]:
+        """Собирает данные пользователя для payload JWT."""
+        return {
+            "sub": str(user.id),
+            "username": user.username,
+            "role": user.role,
+        }
 
     @staticmethod
     def _create_token(
         data: dict[str, Any], expires_delta: timedelta, token_type: str
     ) -> str:
-        """Создаёт JWT токен со стандартными claims.
-
-        Args:
-            data: Данные для кодирования в payload
-            expires_delta: Время жизни токена
-            token_type: "access" или "refresh"
-
-        Returns:
-            Закодированная строка JWT токена
-        """
+        """Создаёт JWT токен с заданным типом и временем жизни."""
         payload = data.copy()
         now = datetime.now(timezone.utc)
 
@@ -56,15 +47,7 @@ class TokenService:
     def create_access_token(
         cls, data: dict[str, Any], expires_delta: Optional[timedelta] = None
     ) -> str:
-        """Создаёт access токен.
-
-        Args:
-            data: Данные пользователя для кодирования (sub, username, role)
-            expires_delta: Кастомный TTL, по умолчанию 15 минут
-
-        Returns:
-            Строка access токена
-        """
+        """Создаёт access токен (TTL 15 минут по умолчанию)."""
         ttl = expires_delta or timedelta(minutes=15)
         return cls._create_token(data=data, expires_delta=ttl, token_type="access")
 
@@ -72,31 +55,13 @@ class TokenService:
     def create_refresh_token(
         cls, data: dict[str, Any], expires_delta: Optional[timedelta] = None
     ) -> str:
-        """Создаёт refresh токен.
-
-        Args:
-            data: Данные пользователя для кодирования (sub, username, role)
-            expires_delta: Кастомный TTL, по умолчанию 7 дней
-
-        Returns:
-            Строка refresh токена
-        """
+        """Создаёт refresh токен (TTL 7 дней по умолчанию)."""
         ttl = expires_delta or timedelta(days=7)
         return cls._create_token(data=data, expires_delta=ttl, token_type="refresh")
 
     @staticmethod
     def decode_token(token: str) -> dict[str, Any]:
-        """Валидирует и декодирует JWT токен.
-
-        Args:
-            token: Строка JWT токена
-
-        Returns:
-            Декодированный payload токена
-
-        Raises:
-            HTTPException: Если токен невалиден, истёк или malformed
-        """
+        """Валидирует и декодирует JWT токен, возвращает payload."""
         try:
             payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[ALGORITHM])
             return payload
@@ -108,17 +73,7 @@ class TokenService:
 
     @staticmethod
     def get_jti(payload: dict[str, Any]) -> str:
-        """Извлекает JTI (JWT ID) из payload токена.
-
-        Args:
-            payload: Декодированный JWT payload
-
-        Returns:
-            Строка JTI
-
-        Raises:
-            HTTPException: Если JTI отсутствует в payload
-        """
+        """Извлекает JTI (JWT ID) из payload токена."""
         jti = payload.get("jti")
         if not jti:
             raise HTTPException(
@@ -128,17 +83,7 @@ class TokenService:
 
     @staticmethod
     def get_user_id(payload: dict[str, Any]) -> str:
-        """Извлекает ID пользователя (claim sub) из payload токена.
-
-        Args:
-            payload: Декодированный JWT payload
-
-        Returns:
-            Строка ID пользователя
-
-        Raises:
-            HTTPException: Если claim sub отсутствует
-        """
+        """Извлекает ID пользователя (claim sub) из payload токена."""
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(
@@ -149,15 +94,7 @@ class TokenService:
 
     @staticmethod
     def validate_token_type(payload: dict[str, Any], expected_type: str) -> None:
-        """Валидирует, что токен имеет ожидаемый тип.
-
-        Args:
-            payload: Декодированный JWT payload
-            expected_type: "access" или "refresh"
-
-        Raises:
-            HTTPException: Если тип токена не совпадает
-        """
+        """Валидирует, что токен имеет ожидаемый тип (access или refresh)."""
         token_type = payload.get("type")
         if token_type != expected_type:
             raise HTTPException(
@@ -170,14 +107,7 @@ class TokenService:
         data: dict[str, Any],
         expires_delta: timedelta | None = None,
     ) -> tuple[str, str, str, int]:
-        """Создаёт пару токенов и возвращает их с метаданными refresh-токена.
-
-        Возвращает:
-        - access_token: JWT access токен
-        - refresh_token: JWT refresh токен
-        - refresh_jti: идентификатор refresh-токена
-        - refresh_exp: время истечения refresh-токена (unix timestamp)
-        """
+        """Создаёт пару токенов и возвращает (access, refresh, jti, exp)."""
         access_token = TokenService.create_access_token(data, expires_delta)
         refresh_token = TokenService.create_refresh_token(data)
 
@@ -187,7 +117,7 @@ class TokenService:
 
         if not refresh_exp:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Refresh token missing exp",
             )
 

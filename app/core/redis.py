@@ -1,9 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 import redis.asyncio as redis
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -16,12 +19,12 @@ redis_client = redis.from_url(
 
 async def connect_redis() -> None:
     await redis_client.ping()
-    print("Redis connected")
+    logger.info("Redis connected")
 
 
 async def close_redis() -> None:
     await redis_client.close()
-    print("Redis closed")
+    logger.info("Redis closed")
 
 
 def _seconds_until(exp_unix: int) -> int:

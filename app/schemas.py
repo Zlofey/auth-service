@@ -1,14 +1,4 @@
-from enum import Enum
-
 from pydantic import BaseModel, Field
-
-
-class UserRole(str, Enum):
-    """Роли пользователей."""
-
-    ADMIN = "admin"
-    STAFF = "staff"
-    CLIENT = "client"
 
 
 class UserRegister(BaseModel):

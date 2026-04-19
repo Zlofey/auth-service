@@ -1,58 +1,46 @@
+import logging
 import time
 from typing import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.utils import get_client_ip
+
+logger = logging.getLogger(__name__)
+
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware for logging HTTP requests and responses."""
+    """Middleware для логирования HTTP-запросов и ответов."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process request and log timing/details."""
-        start_time = time.time()
+        """Обрабатывает запрос и логирует время/детали."""
+        start_time = time.perf_counter()
 
-        # Extract client information
-        client_ip = self._get_client_ip(request)
+        client_ip = get_client_ip(request) or "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
+        log_ts = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Log request
-        print(
-            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-            f"{request.method} {request.url.path} - "
-            f"IP: {client_ip} - UA: {user_agent[:50]}"
+        logger.info(
+            "[%s] %s %s - IP: %s - UA: %s",
+            log_ts,
+            request.method,
+            request.url.path,
+            client_ip,
+            user_agent[:50],
         )
 
-        # Process request
         response = await call_next(request)
 
-        # Calculate processing time
-        process_time = time.time() - start_time
+        process_time = time.perf_counter() - start_time
 
-        # Log response
-        print(
-            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-            f"Response {response.status_code} - "
-            f"Duration: {process_time:.3f}s"
+        logger.info(
+            "[%s] Response %s - Duration: %.3fs",
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            response.status_code,
+            process_time,
         )
 
-        # Add timing header
-        response.headers["X-Process-Time"] = str(process_time)
+        response.headers["X-Process-Time"] = f"{process_time:.6f}"
 
         return response
-
-    @staticmethod
-    def _get_client_ip(request: Request) -> str:
-        """Extract real client IP from request headers."""
-        # Check for forwarded IP (proxy/load balancer)
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-
-        # Check for real IP header
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip
-
-        # Fall back to direct connection
-        return request.client.host if request.client else "unknown"

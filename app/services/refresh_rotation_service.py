@@ -1,13 +1,21 @@
+import asyncio
+import time
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.redis import blacklist_jti, is_blacklisted
+from app.core.redis import (
+    acquire_refresh_lock,
+    blacklist_jti,
+    get_refresh_grace,
+    is_blacklisted,
+    set_refresh_grace,
+)
 from app.schemas import TokenOut
-from app.services.race_condition_service import RaceConditionService
 from app.services.session_service import SessionService
 from app.services.token_service import TokenService
+from app.services.user_service import UserService
 
 
 class RefreshRotationService:
@@ -17,15 +25,6 @@ class RefreshRotationService:
     - Для одного `old_jti` одновременно выполняется только одна ротация (Redis lock).
     - Параллельные запросы получают готовый результат из grace-кэша.
     """
-
-    @staticmethod
-    def _create_token_payload(user) -> dict:
-        """Собирает payload для JWT из данных пользователя."""
-        return {
-            "sub": str(user.id),
-            "username": user.username,
-            "role": user.role,
-        }
 
     @staticmethod
     async def _validate_refresh_token(refresh_token: str) -> tuple[str, int, str]:
@@ -56,16 +55,24 @@ class RefreshRotationService:
 
     @staticmethod
     async def _handle_race_condition(old_jti: str) -> TokenOut | None:
-        """Обрабатывает гонку запросов при refresh.
+        """Сериализует параллельные refresh с одним и тем же `old_jti`.
 
-        Если lock не удалось взять, значит другой запрос уже делает rotation.
-        Тогда пытаемся быстро получить готовый ответ из grace-кэша.
+        Redis SET NX на ключ `lock:refresh:{old_jti}`: только один запрос проходит
+        дальше и выполняет rotation; остальные не должны дублировать работу.
+
+        Если lock не взят — другой инстанс уже крутит rotation. Тогда коротко
+        опрашиваем grace-кэш: победитель кладёт туда готовую пару токенов, чтобы
+        «опоздавшие» могли вернуть тот же ответ без повторной ротации.
+
+        Возвращает `TokenOut` из кэша или `None`, если мы держим lock и должны
+        выполнить rotation сами. Если кэш так и не заполнился — 409 (клиент
+        может безопасно повторить запрос).
         """
-        lock_acquired = await RaceConditionService.acquire_refresh_lock(old_jti)
+        lock_acquired = await acquire_refresh_lock(old_jti)
 
         if not lock_acquired:
             # Другой запрос уже в процессе — ждём результат короткое время.
-            cached = await RaceConditionService.wait_for_grace_period(old_jti)
+            cached = await RefreshRotationService.wait_for_grace_period(old_jti)
             if cached:
                 return cached
             raise HTTPException(status_code=409, detail="Refresh in progress, retry")
@@ -76,7 +83,7 @@ class RefreshRotationService:
     @staticmethod
     def _generate_new_tokens(user) -> tuple[str, str, str, int]:
         """Генерирует новую пару (access/refresh) и метаданные нового refresh."""
-        token_payload = RefreshRotationService._create_token_payload(user)
+        token_payload = TokenService.user_token_data(user)
         return TokenService.create_token_pair_with_metadata(token_payload)
 
     @staticmethod
@@ -88,9 +95,7 @@ class RefreshRotationService:
         if not session:
             raise HTTPException(status_code=401, detail="Session not found or revoked")
 
-        user = await SessionService.get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found or inactive")
+        user = await UserService.get_user_by_id(db, user_id)
 
         return session, user
 
@@ -116,7 +121,7 @@ class RefreshRotationService:
             refresh_token=new_refresh,
             token_type="bearer",
         )
-        await RaceConditionService.store_grace_result(old_jti, result)
+        await RefreshRotationService.store_grace_result(old_jti, result)
         return result
 
     @staticmethod
@@ -143,23 +148,19 @@ class RefreshRotationService:
         )
 
     @staticmethod
-    async def logout(db: AsyncSession, refresh_token: str) -> None:
-        """Логаут: blacklist refresh-токена и отзыв сессии в БД (если найдём)."""
-        payload = TokenService.decode_token(refresh_token)
-        TokenService.validate_token_type(payload, "refresh")
+    async def wait_for_grace_period(
+        old_jti: str, max_wait_seconds: float = 3.0
+    ) -> TokenOut | None:
+        """Ждёт результат ротации другого параллельного запроса."""
+        deadline = time.monotonic() + max_wait_seconds
+        while time.monotonic() < deadline:
+            cached = await get_refresh_grace(old_jti)
+            if cached:
+                return TokenOut(**cached)
+            await asyncio.sleep(0.25)
+        return None
 
-        jti = TokenService.get_jti(payload)
-        exp = payload.get("exp")
-        user_id_str = TokenService.get_user_id(payload)
-
-        if not exp:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-
-        # Сразу отзываем refresh в Redis (stateless invalidation).
-        await blacklist_jti(jti, int(exp))
-
-        # Если сессия есть в БД — помечаем revoked.
-        user_id = UUID(user_id_str)
-        session = await SessionService.get_active_session_by_jti(db, user_id, jti)
-        if session:
-            await SessionService.revoke_session(db, session)
+    @staticmethod
+    async def store_grace_result(old_jti: str, tokens: TokenOut) -> None:
+        """Кладёт результат refresh в grace-кэш для других параллельных запросов."""
+        await set_refresh_grace(old_jti, tokens.model_dump(), ttl_seconds=10)
