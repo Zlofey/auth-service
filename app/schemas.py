@@ -23,3 +23,13 @@ class RefreshIn(BaseModel):
 
 class LogoutIn(BaseModel):
     refresh_token: str
+
+
+class LogoutAllIn(BaseModel):
+    refresh_token: str
+
+
+class ChangePasswordIn(BaseModel):
+    refresh_token: str
+    current_password: str = Field(min_length=3, max_length=128)
+    new_password: str = Field(min_length=3, max_length=128)

@@ -9,11 +9,31 @@ from app.core.redis import blacklist_jti
 from app.db.models import Session, User
 from app.schemas import TokenOut
 from app.services.token_service import TokenService
-from app.utils import verify_password
+from app.services.user_service import UserService
+from app.utils import hash_password, verify_password
 
 
 class SessionService:
     """Сервис работы с сессиями."""
+
+    @staticmethod
+    def _parse_refresh_token(refresh_token: str) -> tuple[str, int, UUID]:
+        """Валидирует refresh-токен и возвращает (jti, exp, user_id)."""
+        payload = TokenService.decode_token(refresh_token)
+        TokenService.validate_token_type(payload, "refresh")
+
+        jti = TokenService.get_jti(payload)
+        exp = payload.get("exp")
+        if not exp:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        user_id = UUID(TokenService.get_user_id(payload))
+        return jti, int(exp), user_id
+
+    @staticmethod
+    async def _blacklist_refresh_token(jti: str, exp: int) -> None:
+        """Отзывает refresh-токен в Redis blacklist до его expiry."""
+        await blacklist_jti(jti, exp)
 
     @staticmethod
     async def get_active_session_by_jti(
@@ -30,6 +50,19 @@ class SessionService:
                 Session.is_revoked.is_(False),
             )
         )
+
+    @staticmethod
+    async def get_active_sessions_by_user_id(
+        db: AsyncSession, user_id: UUID
+    ) -> list[Session]:
+        """Возвращает все активные сессии пользователя."""
+        result = await db.scalars(
+            select(Session).where(
+                Session.user_id == user_id,
+                Session.is_revoked.is_(False),
+            )
+        )
+        return list(result.all())
 
     @staticmethod
     async def revoke_session(db: AsyncSession, session: Session) -> None:
@@ -105,19 +138,53 @@ class SessionService:
     @staticmethod
     async def logout(db: AsyncSession, refresh_token: str) -> None:
         """Логаут: blacklist refresh-токена и отзыв сессии в БД (если найдём)."""
-        payload = TokenService.decode_token(refresh_token)
-        TokenService.validate_token_type(payload, "refresh")
+        jti, exp, user_id = SessionService._parse_refresh_token(refresh_token)
+        await SessionService._blacklist_refresh_token(jti, exp)
 
-        jti = TokenService.get_jti(payload)
-        exp = payload.get("exp")
-        user_id_str = TokenService.get_user_id(payload)
-
-        if not exp:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-
-        await blacklist_jti(jti, int(exp))
-
-        user_id = UUID(user_id_str)
         session = await SessionService.get_active_session_by_jti(db, user_id, jti)
         if session:
             await SessionService.revoke_session(db, session)
+
+    @staticmethod
+    async def _revoke_all_user_sessions(db: AsyncSession, user_id: UUID) -> None:
+        """Отзывает все активные refresh-сессии пользователя и blacklists их JTI."""
+        sessions = await SessionService.get_active_sessions_by_user_id(db, user_id)
+        for session in sessions:
+            exp_dt = session.expires_at
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+
+            await SessionService._blacklist_refresh_token(
+                session.refresh_jti, int(exp_dt.timestamp())
+            )
+            session.is_revoked = True
+
+        await db.commit()
+
+    @staticmethod
+    async def logout_all(db: AsyncSession, refresh_token: str) -> None:
+        """Разлогинивает пользователя на всех устройствах."""
+        jti, exp, user_id = SessionService._parse_refresh_token(refresh_token)
+        await SessionService._blacklist_refresh_token(jti, exp)
+        await SessionService._revoke_all_user_sessions(db, user_id)
+
+    @staticmethod
+    async def change_password(
+        db: AsyncSession,
+        refresh_token: str,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        """Меняет пароль пользователя и отзывает все активные refresh-сессии."""
+        jti, exp, user_id = SessionService._parse_refresh_token(refresh_token)
+        user = await UserService.get_user_by_id(db, user_id)
+
+        if not verify_password(current_password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
+
+        user.password_hash = hash_password(new_password)
+        await SessionService._blacklist_refresh_token(jti, exp)
+        await SessionService._revoke_all_user_sessions(db, user_id)

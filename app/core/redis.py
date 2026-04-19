@@ -18,44 +18,52 @@ redis_client = redis.from_url(
 
 
 async def connect_redis() -> None:
+    """Открывает соединение с Redis."""
     await redis_client.ping()
     logger.info("Redis connected")
 
 
 async def close_redis() -> None:
+    """Закрывает соединение с Redis."""
     await redis_client.close()
     logger.info("Redis closed")
 
 
 def _seconds_until(exp_unix: int) -> int:
+    """Возвращает положительный TTL в секундах."""
     now = int(datetime.now(timezone.utc).timestamp())
     ttl = exp_unix - now
     return max(ttl, 1)
 
 
 async def is_blacklisted(jti: str) -> bool:
+    """Проверяет, что JTI токена в blacklist."""
     key = f"bl:{jti}"
     return await redis_client.exists(key) == 1
 
 
 async def blacklist_jti(jti: str, exp_unix: int) -> None:
+    """Добавляет JTI токена в blacklist до истечения."""
     key = f"bl:{jti}"
     ttl = _seconds_until(exp_unix)
     await redis_client.set(key, "1", ex=ttl)
 
 
 async def acquire_refresh_lock(old_jti: str, ttl_seconds: int = 10) -> bool:
+    """Берёт короткий lock для refresh-ротации."""
     key = f"lock:refresh:{old_jti}"
     result = await redis_client.set(key, "1", nx=True, ex=ttl_seconds)
     return result is True
 
 
 async def set_refresh_grace(old_jti: str, tokens: dict, ttl_seconds: int = 10) -> None:
+    """Сохраняет результат refresh в grace-кэш."""
     key = f"grace:refresh:{old_jti}"
     await redis_client.set(key, json.dumps(tokens), ex=ttl_seconds)
 
 
 async def get_refresh_grace(old_jti: str) -> dict | None:
+    """Читает результат refresh из grace-кэша."""
     key = f"grace:refresh:{old_jti}"
     raw = await redis_client.get(key)
     if not raw:

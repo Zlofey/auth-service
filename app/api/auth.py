@@ -2,7 +2,15 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.schemas import LogoutIn, RefreshIn, TokenOut, UserLogin, UserRegister
+from app.schemas import (
+    ChangePasswordIn,
+    LogoutAllIn,
+    LogoutIn,
+    RefreshIn,
+    TokenOut,
+    UserLogin,
+    UserRegister,
+)
 from app.services.refresh_rotation_service import RefreshRotationService
 from app.services.session_service import SessionService
 from app.services.user_service import UserService
@@ -54,3 +62,28 @@ async def refresh_token(
 )
 async def logout(payload: LogoutIn, db: AsyncSession = Depends(get_db)) -> None:
     await SessionService.logout(db, payload.refresh_token)
+
+
+@router.post(
+    "/logout-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Выход пользователя из всех устройств",
+)
+async def logout_all(payload: LogoutAllIn, db: AsyncSession = Depends(get_db)) -> None:
+    await SessionService.logout_all(db, payload.refresh_token)
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Изменение пароля пользователя",
+)
+async def change_password(
+    payload: ChangePasswordIn, db: AsyncSession = Depends(get_db)
+) -> None:
+    await SessionService.change_password(
+        db,
+        refresh_token=payload.refresh_token,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+    )
